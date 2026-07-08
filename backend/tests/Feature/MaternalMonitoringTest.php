@@ -27,7 +27,9 @@ class MaternalMonitoringTest extends TestCase
         $this->getJson('/api/maternal-monitoring/me')
             ->assertOk()
             ->assertJsonPath('profile.name', 'Maria Santos')
-            ->assertJsonPath('summary.latest.blood_pressure', '120/80');
+            ->assertJsonPath('summary.latest.blood_pressure', '120/80')
+            ->assertJsonPath('summary.blood_pressure_logs.0.blood_pressure', '120/80')
+            ->assertJsonPath('summary.blood_pressure_logs.0.status', 'Normal');
 
         $this->postJson('/api/maternal-monitoring/entries', [
             'pregnancy_week' => 34,
@@ -80,8 +82,12 @@ class MaternalMonitoringTest extends TestCase
             ->assertOk()
             ->assertJsonCount(3, 'summary.weight_logs')
             ->assertJsonCount(2, 'summary.weight_trend')
+            ->assertJsonCount(2, 'summary.blood_pressure_logs')
             ->assertJsonPath('summary.weight_trend.1.pregnancy_week', 34)
             ->assertJsonPath('summary.weight_trend.1.weight_kg', 76)
+            ->assertJsonPath('summary.blood_pressure_trend.1.systolic', 122)
+            ->assertJsonPath('summary.blood_pressure_trend.1.diastolic', 78)
+            ->assertJsonPath('summary.blood_pressure_trend.1.status', 'Normal')
             ->assertJsonPath('summary.weight_analytics.engine', 'python')
             ->assertJsonPath('summary.weight_analytics.cached', true)
             ->assertJsonPath('summary.weight_analytics.raw_log_count', 3)
@@ -127,6 +133,7 @@ class MaternalMonitoringTest extends TestCase
             ->assertOk()
             ->assertJsonPath('profile.risk_level', 'high')
             ->assertJsonPath('summary.latest.blood_pressure', '145/92')
+            ->assertJsonPath('summary.blood_pressure_trend.0.status', 'High Blood Pressure (Stage 1)')
             ->assertJsonPath('summary.latest.recorded_by', 'Nurse Linda Reyes');
     }
 

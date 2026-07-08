@@ -11,6 +11,7 @@ use App\Models\MaternalMonitoringEntry;
 use App\Models\Mother;
 use App\Models\UserCheckupRecord;
 use App\Models\UserIECProgress;
+use App\Services\MaternalAnalyticsService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -20,6 +21,11 @@ use Illuminate\Support\Facades\DB;
 
 class HealthWorkerCasefilesController extends Controller
 {
+    public function __construct(
+        private readonly MaternalAnalyticsService $analytics,
+    ) {
+    }
+
     public function index(Request $request): JsonResponse
     {
         $worker = $this->currentWorker($request);
@@ -403,28 +409,53 @@ class HealthWorkerCasefilesController extends Controller
         $missedAppointments = $this->missedAppointmentCount($mother, $monitoringRecords);
         $latest = $monitoringRecords->last();
 
-        $weightValues = $monitoringRecords
+        $prePregnancyWeight = (float) ($mother->pre_pregnancy_weight_kg ?? 62);
+        $weightLogs = $monitoringRecords
             ->whereNotNull('weight_kg')
             ->map(fn ($record) => [
+                'id' => $record['id'],
                 'date' => $record['monitoring_date'],
-                'week' => $record['gestational_week'],
-                'value' => $record['weight_kg'],
+                'recorded_at' => $record['monitoring_datetime'],
+                'pregnancy_week' => $record['gestational_week'],
+                'weight_kg' => $record['weight_kg'],
+                'notes' => $record['notes'],
+            ])
+            ->values();
+        $weightAnalytics = $this->analytics->analyze($weightLogs->all(), $prePregnancyWeight);
+        $weightValues = $weightLogs
+            ->map(fn ($record) => [
+                'id' => $record['id'] ?? null,
+                'date' => $record['date'] ?? null,
+                'recorded_at' => $record['recorded_at'] ?? null,
+                'week' => $record['pregnancy_week'] ?? null,
+                'pregnancy_week' => $record['pregnancy_week'] ?? null,
+                'value' => $record['weight_kg'] ?? null,
+                'weight_kg' => $record['weight_kg'] ?? null,
             ])
             ->values();
 
         $bloodPressureValues = $monitoringRecords
-            ->filter(fn ($record) => $record['systolic_bp'] !== null || $record['diastolic_bp'] !== null)
+            ->filter(fn ($record) => $record['systolic_bp'] !== null && $record['diastolic_bp'] !== null)
             ->map(fn ($record) => [
+                'id' => $record['id'],
                 'date' => $record['monitoring_date'],
+                'recorded_at' => $record['monitoring_datetime'],
                 'week' => $record['gestational_week'],
+                'pregnancy_week' => $record['gestational_week'],
                 'systolic' => $record['systolic_bp'],
                 'diastolic' => $record['diastolic_bp'],
+                'blood_pressure' => $record['blood_pressure'],
             ])
             ->values();
 
         return [
+            'weight_trend' => $weightValues,
             'weight_progression' => $weightValues,
+            'blood_pressure_trend' => $bloodPressureValues,
             'blood_pressure_trends' => $bloodPressureValues,
+            'weight_logs' => $weightLogs,
+            'weight_summary' => $weightAnalytics['weight_summary'],
+            'weight_analytics' => $weightAnalytics['analytics'],
             'prenatal_visit_completion' => [
                 'completed' => $completedVisits,
                 'expected' => $expectedVisits,

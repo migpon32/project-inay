@@ -223,6 +223,25 @@ class MaternalMonitoringController extends Controller
                 'weight_kg' => (float) $entry->weight_kg,
                 'notes' => $entry->notes,
             ]);
+        $bloodPressureLogs = $entries
+            ->filter(fn ($entry) => $entry->systolic_bp !== null && $entry->diastolic_bp !== null)
+            ->values()
+            ->map(function (MaternalMonitoringEntry $entry) {
+                $status = $this->bloodPressureStatus($entry->systolic_bp, $entry->diastolic_bp);
+
+                return [
+                    'id' => $entry->id,
+                    'date' => $entry->recorded_at?->toDateString(),
+                    'recorded_at' => $entry->recorded_at?->toIso8601String(),
+                    'pregnancy_week' => $entry->pregnancy_week,
+                    'systolic' => $entry->systolic_bp,
+                    'diastolic' => $entry->diastolic_bp,
+                    'blood_pressure' => "{$entry->systolic_bp}/{$entry->diastolic_bp}",
+                    'status' => $status['label'],
+                    'status_key' => $status['key'],
+                    'severity' => $status['severity'],
+                ];
+            });
         $weightAnalytics = $this->analytics->analyze(
             $weightLogs->all(),
             $prePregnancyWeight,
@@ -234,6 +253,8 @@ class MaternalMonitoringController extends Controller
             'weight_trend' => $weightAnalytics['weight_trend'],
             'weight_summary' => $weightAnalytics['weight_summary'],
             'weight_analytics' => $weightAnalytics['analytics'],
+            'blood_pressure_logs' => $bloodPressureLogs,
+            'blood_pressure_trend' => $bloodPressureLogs,
             'recommendations' => $this->recommendations($latest, $mother),
             'guidelines' => [
                 ['title' => 'Blood Pressure', 'optimal' => '< 120/80 mmHg', 'warning' => '>= 140/90 mmHg'],
@@ -267,6 +288,47 @@ class MaternalMonitoringController extends Controller
             'risk_level' => $entry->risk_level,
             'notes' => $entry->notes,
             'recorded_at' => $entry->recorded_at?->toIso8601String(),
+        ];
+    }
+
+    private function bloodPressureStatus(int $systolic, int $diastolic): array
+    {
+        if ($systolic >= 180 || $diastolic >= 120) {
+            return [
+                'key' => 'crisis',
+                'label' => 'Hypertensive Crisis',
+                'severity' => 'high',
+            ];
+        }
+
+        if ($systolic >= 160 || $diastolic >= 100) {
+            return [
+                'key' => 'stage_2',
+                'label' => 'High Blood Pressure (Stage 2)',
+                'severity' => 'high',
+            ];
+        }
+
+        if ($systolic >= 140 || $diastolic >= 90) {
+            return [
+                'key' => 'stage_1',
+                'label' => 'High Blood Pressure (Stage 1)',
+                'severity' => 'medium',
+            ];
+        }
+
+        if ($systolic >= 130 || $diastolic >= 85) {
+            return [
+                'key' => 'elevated',
+                'label' => 'Elevated',
+                'severity' => 'medium',
+            ];
+        }
+
+        return [
+            'key' => 'normal',
+            'label' => 'Normal',
+            'severity' => 'low',
         ];
     }
 

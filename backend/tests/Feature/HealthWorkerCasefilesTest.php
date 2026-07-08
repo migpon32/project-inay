@@ -138,6 +138,20 @@ class HealthWorkerCasefilesTest extends TestCase
             'weight_kg' => 67.5,
             'risk_level' => 'low',
             'notes' => 'Stable vitals.',
+            'recorded_at' => now()->subDay(),
+        ]);
+        MaternalMonitoringEntry::create([
+            'mother_id' => $mother->id,
+            'recorded_by_user_id' => $workerUser->id,
+            'pregnancy_week' => 18,
+            'systolic_bp' => 124,
+            'diastolic_bp' => 80,
+            'blood_sugar_mgdl' => 99,
+            'body_temperature_c' => 36.8,
+            'heart_rate' => 84,
+            'weight_kg' => 68.2,
+            'risk_level' => 'low',
+            'notes' => 'Updated same-week weight.',
             'recorded_at' => now(),
         ]);
 
@@ -190,6 +204,12 @@ class HealthWorkerCasefilesTest extends TestCase
             ->assertJsonPath('profile.patient_id', 'MAT-RHU-' . str_pad((string) $mother->id, 3, '0', STR_PAD_LEFT))
             ->assertJsonPath('profile.current_trimester', 'Second Trimester')
             ->assertJsonPath('monitoring_records.0.blood_pressure', '122/78')
+            ->assertJsonCount(2, 'statistics.weight_trend')
+            ->assertJsonPath('statistics.weight_trend.1.weight_kg', 68.2)
+            ->assertJsonCount(2, 'statistics.weight_progression')
+            ->assertJsonPath('statistics.weight_progression.1.value', 68.2)
+            ->assertJsonCount(2, 'statistics.blood_pressure_trend')
+            ->assertJsonCount(2, 'statistics.blood_pressure_trends')
             ->assertJsonPath('medical_documents.items.0.type', 'lab_result')
             ->assertJsonPath('clinical_notes.0.body', 'Continue routine prenatal care.')
             ->assertJsonPath('learning_progress.categories.second_trimester.modules.0.is_completed', true);
