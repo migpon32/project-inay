@@ -10,6 +10,9 @@ class ConsultationMessage extends Model
     protected $fillable = [
         'consultation_id',
         'sender_user_id',
+        'sender_role',
+        'receiver_user_id',
+        'receiver_role',
         'body',
         'attachment_path',
         'attachment_name',
@@ -17,11 +20,13 @@ class ConsultationMessage extends Model
         'attachment_size',
         'iec_video_id',
         'read_at',
+        'unsent_at',
     ];
 
     protected $casts = [
         'attachment_size' => 'integer',
         'read_at' => 'datetime',
+        'unsent_at' => 'datetime',
     ];
 
     public function consultation(): BelongsTo

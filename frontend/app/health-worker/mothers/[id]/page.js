@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import axios from "axios";
@@ -8,6 +8,7 @@ import {
   Activity,
   AlertTriangle,
   ArrowLeft,
+  ArrowUpDown,
   CalendarPlus,
   CheckCircle2,
   ChevronRight,
@@ -20,6 +21,7 @@ import {
   Eye,
   FileText,
   HeartPulse,
+  History,
   LoaderCircle,
   MapPin,
   NotebookPen,
@@ -27,9 +29,11 @@ import {
   Printer,
   Save,
   Scale,
+  Search,
   ShieldCheck,
   Stethoscope,
   Syringe,
+  Trash2,
   TrendingUp,
   UserRound,
   X,
@@ -107,6 +111,15 @@ const formatDate = (value) => {
   }).format(date);
 };
 
+const dateInputValue = (value) => {
+  const date = parseDate(value);
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+  return localDate.toISOString().slice(0, 10);
+};
+
+const todayInputValue = () => dateInputValue(new Date().toISOString());
+
 const formatDateTime = (value) => {
   const date = parseDate(value);
   if (!date || Number.isNaN(date.getTime())) return "Not provided";
@@ -123,6 +136,88 @@ const formatDateTime = (value) => {
 const metric = (value, suffix = "") => (value || value === 0 ? `${value}${suffix}` : "Not recorded");
 
 const blankableValue = (value) => (value || value === 0 ? value : "");
+
+const vitalFieldLabels = {
+  pregnancy_week: "Pregnancy week",
+  systolic_bp: "Systolic BP",
+  diastolic_bp: "Diastolic BP",
+  blood_sugar_mgdl: "Blood sugar",
+  body_temperature_c: "Body temperature",
+  heart_rate: "Heart rate",
+  weight_kg: "Weight",
+  hemoglobin_gdl: "Hemoglobin",
+  recorded_at: "Record date",
+  notes: "Program staff notes",
+};
+
+const formatValidationMessage = (message) => Object.entries(vitalFieldLabels).reduce(
+  (text, [field, label]) => text.replaceAll(field.replaceAll("_", " "), label.toLowerCase()),
+  String(message || ""),
+);
+
+const errorMessagesFromResponse = (error, fallback) => {
+  const response = error?.response?.data || {};
+  const fieldMessages = Object.values(response.errors || {}).flat().filter(Boolean);
+  const messages = fieldMessages.length ? fieldMessages : [response.message || fallback];
+
+  return [...new Set(messages.map((message) => formatValidationMessage(message)))];
+};
+
+const vitalsReviewMessages = (form) => {
+  const messages = [];
+  const week = numericValue(form.pregnancy_week);
+  const systolic = numericValue(form.systolic_bp);
+  const diastolic = numericValue(form.diastolic_bp);
+  const sugar = numericValue(form.blood_sugar_mgdl);
+  const hemoglobin = numericValue(form.hemoglobin_gdl);
+  const temperature = numericValue(form.body_temperature_c);
+  const heartRate = numericValue(form.heart_rate);
+  const weight = numericValue(form.weight_kg);
+
+  if (week !== null && (week < 1 || week > 42)) {
+    messages.push("Pregnancy week must be from 1 to 42.");
+  }
+
+  if (temperature !== null) {
+    if (temperature < 34 || temperature > 43) {
+      messages.push("Body temperature must be entered in Celsius from 34 to 43 C.");
+    } else if (temperature < 36 || temperature > 37.8) {
+      messages.push("Body temperature is outside the usual range. Review before saving.");
+    }
+  }
+
+  if (systolic !== null && (systolic < 60 || systolic > 220)) {
+    messages.push("Systolic BP must be from 60 to 220 mmHg.");
+  }
+
+  if (diastolic !== null && (diastolic < 40 || diastolic > 140)) {
+    messages.push("Diastolic BP must be from 40 to 140 mmHg.");
+  }
+
+  if (systolic !== null && diastolic !== null && diastolic >= systolic) {
+    messages.push("Diastolic BP should be lower than systolic BP.");
+  } else if (systolic !== null && diastolic !== null && (systolic >= 140 || diastolic >= 90)) {
+    messages.push("Blood pressure is above the recommended range. Confirm the reading and add notes if needed.");
+  }
+
+  if (sugar !== null && (sugar < 40 || sugar > 400)) {
+    messages.push("Blood sugar must be from 40 to 400 mg/dL.");
+  }
+
+  if (hemoglobin !== null && (hemoglobin < 4 || hemoglobin > 20)) {
+    messages.push("Hemoglobin must be from 4 to 20 g/dL.");
+  }
+
+  if (heartRate !== null && (heartRate < 40 || heartRate > 180)) {
+    messages.push("Heart rate must be from 40 to 180 bpm.");
+  }
+
+  if (weight !== null && (weight < 30 || weight > 200)) {
+    messages.push("Weight must be from 30 to 200 kg.");
+  }
+
+  return messages.slice(0, 5);
+};
 
 const vitalStatusStyles = {
   normal: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -161,6 +256,18 @@ const classifyHemoglobin = (value) => {
 };
 
 const classifyWeight = (value) => (numericValue(value) === null ? "missing" : "normal");
+
+const recordDateValue = (record) => {
+  const date = parseDate(record?.monitoring_date || record?.date || record?.recorded_at);
+  return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+};
+
+const vitalStatusLabel = (status) => vitalStatusLabels[status] || "Pending";
+
+const pregnancyWeekLabel = (record) => {
+  const week = record?.gestational_week || record?.pregnancy_week || record?.week;
+  return week ? `Week ${week}` : "N/A";
+};
 
 function ProgressBar({ value, tone = "bg-pink-600" }) {
   const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
@@ -207,26 +314,39 @@ function SummaryCard({ icon: Icon, label, value, detail, tone, progress }) {
   );
 }
 
-function VitalSignCard({ icon: Icon, title, value, unit, status, range, tone }) {
+function VitalSignCard({ icon: Icon, title, value, unit, status, range, tone, onEdit }) {
   return (
-    <article className="rounded-lg border border-slate-300 bg-white p-2.5">
-      <div className="flex items-start justify-between gap-2.5">
+    <article className="min-w-0 rounded-lg border border-slate-300 bg-white p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${tone}`}>
-            <Icon className="h-3.5 w-3.5" />
+          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border ${tone}`}>
+            <Icon className="h-4 w-4" />
           </div>
-          <div className="min-w-0">
-            <p className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">{title}</p>
-            <p className="mt-1 text-lg font-extrabold leading-none text-slate-950">
-              {value}
-              {unit && <span className="ml-1.5 text-xs font-extrabold text-slate-500">{unit}</span>}
-            </p>
+          <div className="min-w-0 text-[10px] font-extrabold uppercase tracking-wide text-slate-400">
+            {title}
           </div>
         </div>
-        <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-extrabold uppercase ${vitalStatusStyles[status] || vitalStatusStyles.missing}`}>
-          {vitalStatusLabels[status] || "Pending"}
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <span className={`rounded-md border px-2 py-0.5 text-[10px] font-extrabold uppercase ${vitalStatusStyles[status] || vitalStatusStyles.missing}`}>
+            {vitalStatusLabel(status)}
+          </span>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-pink-200 bg-pink-50 px-2 text-[10px] font-extrabold uppercase text-pink-600 transition hover:bg-pink-100"
+              aria-label={`Edit ${title}`}
+            >
+              <Edit3 className="h-3 w-3" />
+              Edit
+            </button>
+          )}
+        </div>
       </div>
+      <p className="mt-3 flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-1 text-xl font-extrabold leading-tight text-slate-950">
+        <span className="whitespace-nowrap">{value}</span>
+        {unit && <span className="text-xs font-extrabold text-slate-500">{unit}</span>}
+      </p>
       <div className="mt-3 border-t border-slate-200 pt-2.5">
         <div className="flex flex-col justify-between gap-1 text-[11px] sm:flex-row sm:items-center">
           <span className="font-extrabold text-slate-500">Healthy Range:</span>
@@ -372,6 +492,243 @@ function Modal({ title, children, onClose }) {
   );
 }
 
+function StaffHistoryButton({ label, count, onClick, tone = "text-pink-600 hover:border-pink-200 hover:bg-pink-50" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-extrabold shadow-sm transition hover:shadow-md focus:outline-none focus:ring-4 focus:ring-pink-100 ${tone}`}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <History className="h-4 w-4 shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+      <span className="shrink-0 rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-extrabold uppercase text-slate-500">
+        {count} record{count === 1 ? "" : "s"}
+      </span>
+    </button>
+  );
+}
+
+function StaffHistoryModal({ type, title, description, records = [], onClose, onEdit }) {
+  const [query, setQuery] = useState("");
+  const [sortDirection, setSortDirection] = useState("desc");
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef(null);
+
+  const requestClose = useCallback(() => {
+    if (isClosing) return;
+    setIsClosing(true);
+    closeTimerRef.current = window.setTimeout(onClose, 150);
+  }, [isClosing, onClose]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") requestClose();
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [requestClose]);
+
+  const filteredRecords = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const matchesQuery = (record) => {
+      if (!normalizedQuery) return true;
+
+      if (type === "weight") {
+        const status = record.risk_label || vitalStatusLabel(classifyWeight(record.weight_kg));
+        const values = [
+          formatDate(record.monitoring_date || record.date || record.recorded_at),
+          pregnancyWeekLabel(record),
+          record.weight_kg,
+          status,
+          record.recorded_by,
+        ];
+
+        return values.some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+      }
+
+      const status = vitalStatusLabel(classifyBloodPressure(record));
+      const values = [
+        formatDate(record.monitoring_date || record.date || record.recorded_at),
+        record.blood_pressure,
+        record.systolic_bp,
+        record.diastolic_bp,
+        status,
+        record.recorded_by,
+      ];
+
+      return values.some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+    };
+
+    return records
+      .filter(matchesQuery)
+      .slice()
+      .sort((left, right) => {
+        const direction = sortDirection === "desc" ? -1 : 1;
+        return (recordDateValue(left) - recordDateValue(right)) * direction;
+      });
+  }, [query, records, sortDirection, type]);
+
+  const emptyLabel = query.trim()
+    ? "No records match your search."
+    : type === "weight"
+      ? "No weight records are available yet."
+      : "No blood pressure records are available yet.";
+
+  return (
+    <div
+      className={`fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/55 px-3 py-5 backdrop-blur-sm sm:px-6 ${isClosing ? "inay-modal-overlay-out" : "inay-modal-overlay-in"}`}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) requestClose();
+      }}
+      role="presentation"
+    >
+      <section
+        className={`flex h-[80vh] w-full max-w-[900px] flex-col rounded-2xl bg-white shadow-2xl ${isClosing ? "inay-modal-panel-out" : "inay-modal-panel-in"}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`staff-${type}-history-title`}
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-4 py-4 sm:px-5">
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-pink-600">Monitoring History</p>
+            <h2 id={`staff-${type}-history-title`} className="mt-1 text-lg font-extrabold text-slate-950 sm:text-xl">{title}</h2>
+            <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={requestClose}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-4 focus:ring-pink-100"
+            aria-label={`Close ${title}`}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="shrink-0 border-b border-slate-100 px-4 py-3 sm:px-5">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <label className="relative block min-w-0">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search date, values, status, or staff..."
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-pink-500 focus:bg-white focus:ring-4 focus:ring-pink-100"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-extrabold uppercase text-slate-600 transition hover:border-pink-200 hover:text-pink-600 focus:outline-none focus:ring-4 focus:ring-pink-100"
+            >
+              <ArrowUpDown className="h-4 w-4" />
+              {sortDirection === "desc" ? "Newest First" : "Oldest First"}
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] font-bold text-slate-400">
+            Showing {filteredRecords.length} of {records.length} record{records.length === 1 ? "" : "s"}
+          </p>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-5">
+          {filteredRecords.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-500">
+              {emptyLabel}
+            </div>
+          ) : (
+            <div className="inay-scroll-x max-h-[calc(80vh-18rem)] overflow-y-auto rounded-lg border border-slate-100">
+              <table className="min-w-[720px] w-full text-left text-xs">
+                <thead className="sticky top-0 z-10 bg-slate-50 font-extrabold uppercase text-slate-400">
+                  {type === "weight" ? (
+                    <tr>
+                      <th className="px-3 py-3">Date</th>
+                      <th className="px-3 py-3">Pregnancy Week</th>
+                      <th className="px-3 py-3">Weight</th>
+                      <th className="px-3 py-3">Status</th>
+                      <th className="px-3 py-3 text-right">Edit</th>
+                    </tr>
+                  ) : (
+                    <tr>
+                      <th className="px-3 py-3">Date</th>
+                      <th className="px-3 py-3">Systolic</th>
+                      <th className="px-3 py-3">Diastolic</th>
+                      <th className="px-3 py-3">Blood Pressure Status</th>
+                      <th className="px-3 py-3 text-right">Edit</th>
+                    </tr>
+                  )}
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredRecords.map((record) => {
+                    const bpStatus = classifyBloodPressure(record);
+                    const status = type === "weight"
+                      ? record.risk_label || vitalStatusLabel(classifyWeight(record.weight_kg))
+                      : vitalStatusLabel(bpStatus);
+
+                    return (
+                      <tr key={`${type}-${record.id || record.monitoring_date}`} className="transition hover:bg-slate-50">
+                        <td className="px-3 py-3 font-bold text-slate-700">{formatDate(record.monitoring_date || record.date || record.recorded_at)}</td>
+                        {type === "weight" ? (
+                          <>
+                            <td className="px-3 py-3 font-bold text-slate-700">{pregnancyWeekLabel(record)}</td>
+                            <td className="px-3 py-3 font-extrabold text-slate-950">{metric(record.weight_kg, " kg")}</td>
+                            <td className="px-3 py-3">
+                              <span className={`inline-flex whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-extrabold uppercase ${riskStyles[record.risk_level] || vitalStatusStyles[classifyWeight(record.weight_kg)] || vitalStatusStyles.missing}`}>
+                                {status}
+                              </span>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="px-3 py-3 font-extrabold text-red-600">{record.systolic_bp ?? "N/A"} mmHg</td>
+                            <td className="px-3 py-3 font-extrabold text-blue-600">{record.diastolic_bp ?? "N/A"} mmHg</td>
+                            <td className="px-3 py-3">
+                              <span className={`inline-flex whitespace-nowrap rounded-md border px-2 py-1 text-[10px] font-extrabold uppercase ${vitalStatusStyles[bpStatus] || vitalStatusStyles.missing}`}>
+                                {status}
+                              </span>
+                            </td>
+                          </>
+                        )}
+                        <td className="px-3 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              requestClose();
+                              onEdit(record);
+                            }}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-pink-200 bg-pink-50 px-3 text-[11px] font-extrabold uppercase text-pink-600 transition hover:bg-pink-100"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function MotherDetailsPage() {
   const params = useParams();
   const router = useRouter();
@@ -379,6 +736,7 @@ export default function MotherDetailsPage() {
   const [casefile, setCasefile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState(null);
+  const [vitalsNotice, setVitalsNotice] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [monitorFilter, setMonitorFilter] = useState("all");
   const [noteDraft, setNoteDraft] = useState("");
@@ -389,8 +747,11 @@ export default function MotherDetailsPage() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [isVitalsOpen, setIsVitalsOpen] = useState(false);
+  const [historyModal, setHistoryModal] = useState(null);
+  const [editingRecordId, setEditingRecordId] = useState(null);
   const [savingInfo, setSavingInfo] = useState(false);
   const [savingVitals, setSavingVitals] = useState(false);
+  const [deletingVitals, setDeletingVitals] = useState(false);
   const [scheduleDate, setScheduleDate] = useState("");
   const [editForm, setEditForm] = useState({
     name: "",
@@ -406,6 +767,7 @@ export default function MotherDetailsPage() {
     co_monitoring_person: "",
   });
   const [vitalsForm, setVitalsForm] = useState({
+    recorded_at: "",
     pregnancy_week: "",
     weight_kg: "",
     systolic_bp: "",
@@ -450,7 +812,7 @@ export default function MotherDetailsPage() {
   const medicalDocuments = casefile?.medical_documents || { expected_types: [], items: [] };
   const clinicalNotes = casefile?.clinical_notes || [];
   const activityTimeline = casefile?.activity_timeline || [];
-  const monitoringRecords = casefile?.monitoring_records || [];
+  const monitoringRecords = useMemo(() => casefile?.monitoring_records || [], [casefile?.monitoring_records]);
   const latestMonitoringRecord = monitoringRecords[monitoringRecords.length - 1] || {};
   const weightTrend = (statistics.weight_trend || statistics.weight_progression || []).map((point) => ({
     ...point,
@@ -461,6 +823,18 @@ export default function MotherDetailsPage() {
     ...point,
     week: point.week ?? point.pregnancy_week,
   }));
+  const staffWeightRecords = useMemo(() => (
+    monitoringRecords.filter((record) => record.weight_kg || record.weight_kg === 0)
+  ), [monitoringRecords]);
+  const staffBloodPressureRecords = useMemo(() => (
+    monitoringRecords.filter((record) => (
+      record.systolic_bp
+      || record.systolic_bp === 0
+      || record.diastolic_bp
+      || record.diastolic_bp === 0
+      || record.blood_pressure
+    ))
+  ), [monitoringRecords]);
   const vitalSigns = [
     {
       title: "Blood Pressure",
@@ -507,16 +881,17 @@ export default function MotherDetailsPage() {
     { value: "documents", label: "Documents", count: medicalDocuments.items?.length || 0 },
     { value: "notes", label: "Notes", count: clinicalNotes.length },
   ];
+  const isVitalsEditMode = Boolean(editingRecordId);
+  const activeVitalsGuidance = useMemo(() => vitalsReviewMessages(vitalsForm), [vitalsForm]);
 
   const filteredMonitoringRecords = useMemo(() => {
-    const records = casefile?.monitoring_records || [];
-    if (monitorFilter === "all") return records;
+    if (monitorFilter === "all") return monitoringRecords;
     if (monitorFilter === "postpartum") {
-      return profile.pregnancy_status === "postpartum" ? records : [];
+      return profile.pregnancy_status === "postpartum" ? monitoringRecords : [];
     }
 
-    return records.filter((record) => record.trimester === monitorFilter);
-  }, [casefile?.monitoring_records, monitorFilter, profile.pregnancy_status]);
+    return monitoringRecords.filter((record) => record.trimester === monitorFilter);
+  }, [monitorFilter, monitoringRecords, profile.pregnancy_status]);
 
   const documentsByType = useMemo(() => {
     return (medicalDocuments.items || []).reduce((groups, document) => {
@@ -568,19 +943,33 @@ export default function MotherDetailsPage() {
     setIsScheduleOpen(true);
   };
 
-  const openVitals = () => {
+  const openVitals = (record = null) => {
+    const isEditingRecord = Boolean(record?.id);
+    setNotice(null);
+    setVitalsNotice(null);
+    setEditingRecordId(isEditingRecord ? record.id : null);
     setVitalsForm({
-      pregnancy_week: blankableValue(latestMonitoringRecord.gestational_week || profile.pregnancy_week || ""),
-      weight_kg: blankableValue(latestMonitoringRecord.weight_kg),
-      systolic_bp: blankableValue(latestMonitoringRecord.systolic_bp),
-      diastolic_bp: blankableValue(latestMonitoringRecord.diastolic_bp),
-      blood_sugar_mgdl: blankableValue(latestMonitoringRecord.blood_sugar_mgdl),
-      hemoglobin_gdl: blankableValue(latestMonitoringRecord.hemoglobin_gdl),
-      body_temperature_c: blankableValue(latestMonitoringRecord.temperature_c),
-      heart_rate: blankableValue(latestMonitoringRecord.heart_rate),
-      notes: "",
+      recorded_at: isEditingRecord
+        ? dateInputValue(record.monitoring_datetime || record.monitoring_date || record.recorded_at)
+        : todayInputValue(),
+      pregnancy_week: blankableValue(record?.gestational_week || record?.pregnancy_week || profile.pregnancy_week || ""),
+      weight_kg: blankableValue(record?.weight_kg),
+      systolic_bp: blankableValue(record?.systolic_bp),
+      diastolic_bp: blankableValue(record?.diastolic_bp),
+      blood_sugar_mgdl: blankableValue(record?.blood_sugar_mgdl),
+      hemoglobin_gdl: blankableValue(record?.hemoglobin_gdl),
+      body_temperature_c: blankableValue(record?.temperature_c),
+      heart_rate: blankableValue(record?.heart_rate),
+      notes: isEditingRecord ? (record.notes || "") : "",
     });
     setIsVitalsOpen(true);
+  };
+
+  const closeVitalsModal = () => {
+    if (savingVitals || deletingVitals) return;
+    setIsVitalsOpen(false);
+    setEditingRecordId(null);
+    setVitalsNotice(null);
   };
 
   const saveSchedule = async (event) => {
@@ -606,27 +995,70 @@ export default function MotherDetailsPage() {
   const saveVitals = async (event) => {
     event.preventDefault();
     setSavingVitals(true);
+    setVitalsNotice(null);
 
-    const payload = Object.fromEntries(
-      Object.entries(vitalsForm).map(([key, value]) => [
+    const isEditMode = Boolean(editingRecordId);
+    const payloadEntries = Object.entries(vitalsForm)
+      .filter(([key]) => !isEditMode || key !== "recorded_at")
+      .map(([key, value]) => [
         key,
-        key === "pregnancy_week" || key === "notes" ? value : (value === "" ? null : value),
-      ]),
-    );
+        key === "pregnancy_week" || key === "notes" || key === "recorded_at" ? value : (value === "" ? null : value),
+      ]);
+    const payload = Object.fromEntries(payloadEntries);
 
     try {
-      const response = await axios.post(
-        `${API_BASE_URL}/health-worker/maternal-monitoring/${motherId}/entries`,
-        payload,
-        authConfig(),
-      );
+      const response = isEditMode
+        ? await axios.patch(
+          `${API_BASE_URL}/health-worker/maternal-monitoring/${motherId}/entries/${editingRecordId}`,
+          payload,
+          authConfig(),
+        )
+        : await axios.post(
+          `${API_BASE_URL}/health-worker/maternal-monitoring/${motherId}/entries`,
+          payload,
+          authConfig(),
+        );
       setNotice({ type: "success", text: response.data.message || "Maternal vitals updated successfully." });
       setIsVitalsOpen(false);
+      setEditingRecordId(null);
       await loadCasefile(true);
     } catch (error) {
-      setNotice({ type: "error", text: error.response?.data?.message || "Unable to update maternal vitals." });
+      setVitalsNotice({
+        type: "error",
+        title: "Review maternal vitals",
+        messages: errorMessagesFromResponse(error, "Unable to update maternal vitals."),
+        detail: "Correct the flagged values, then save again.",
+      });
     } finally {
       setSavingVitals(false);
+    }
+  };
+
+  const deleteVitals = async () => {
+    if (!editingRecordId) return;
+    const confirmed = window.confirm("Are you sure you want to delete this maternal vital record? This action cannot be undone.");
+    if (!confirmed) return;
+
+    setDeletingVitals(true);
+
+    try {
+      const response = await axios.delete(
+        `${API_BASE_URL}/health-worker/maternal-monitoring/${motherId}/entries/${editingRecordId}`,
+        authConfig(),
+      );
+      setNotice({ type: "success", text: response.data.message || "Maternal vital record deleted successfully." });
+      setIsVitalsOpen(false);
+      setEditingRecordId(null);
+      await loadCasefile(true);
+    } catch (error) {
+      setVitalsNotice({
+        type: "error",
+        title: "Unable to delete record",
+        messages: errorMessagesFromResponse(error, "Unable to delete maternal vital record."),
+        detail: "Please try again or keep the record unchanged.",
+      });
+    } finally {
+      setDeletingVitals(false);
     }
   };
 
@@ -870,7 +1302,7 @@ export default function MotherDetailsPage() {
                   detail="Chronological clinical records from the database."
                   action={(
                     <div className="flex flex-wrap justify-end gap-2">
-                      <button type="button" onClick={openVitals} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-pink-600 px-3 text-[11px] font-extrabold text-white transition hover:bg-pink-700">
+                      <button type="button" onClick={() => openVitals()} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-pink-600 px-3 text-[11px] font-extrabold text-white transition hover:bg-pink-700">
                         <Stethoscope className="h-3.5 w-3.5" />
                         Update Vitals
                       </button>
@@ -954,7 +1386,7 @@ export default function MotherDetailsPage() {
                         Latest pregnancy threshold indicators for {profile.name || "this patient"}
                       </p>
                     </div>
-                    <button type="button" onClick={openVitals} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-pink-600 px-4 text-xs font-extrabold text-white transition hover:bg-pink-700">
+                    <button type="button" onClick={() => openVitals()} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-pink-600 px-4 text-xs font-extrabold text-white transition hover:bg-pink-700">
                       <Stethoscope className="h-3.5 w-3.5" />
                       Update Vitals
                     </button>
@@ -962,7 +1394,7 @@ export default function MotherDetailsPage() {
                   <div className="mt-3 border-t border-slate-900 pt-3">
                     <div className="grid gap-3 lg:grid-cols-2">
                       {vitalSigns.map((vital) => (
-                        <VitalSignCard key={vital.title} {...vital} />
+                        <VitalSignCard key={vital.title} {...vital} onEdit={() => openVitals(latestMonitoringRecord)} />
                       ))}
                     </div>
                   </div>
@@ -999,24 +1431,40 @@ export default function MotherDetailsPage() {
                   ))}
                 </div>
                 <div className="grid min-w-0 gap-5 xl:grid-cols-2">
-                  <TrendChart
-                    title="Weight Progression"
-                    data={weightTrend}
-                    emptyLabel="No weight records available"
-                    ySuffix=" kg"
-                    minPadding={2}
-                    series={[{ key: "value", label: "Weight (kg)", color: "#db2777" }]}
-                  />
-                  <TrendChart
-                    title="Blood Pressure Trends"
-                    data={bloodPressureTrend}
-                    emptyLabel="No blood pressure records available"
-                    minPadding={8}
-                    series={[
-                      { key: "systolic", label: "Systolic", color: "#dc2626" },
-                      { key: "diastolic", label: "Diastolic", color: "#2563eb" },
-                    ]}
-                  />
+                  <div className="min-w-0 space-y-3">
+                    <TrendChart
+                      title="Weight Progression"
+                      data={weightTrend}
+                      emptyLabel="No weight records available"
+                      ySuffix=" kg"
+                      minPadding={2}
+                      series={[{ key: "value", label: "Weight (kg)", color: "#db2777" }]}
+                    />
+                    <StaffHistoryButton
+                      label="View Weight History"
+                      count={staffWeightRecords.length}
+                      onClick={() => setHistoryModal("weight")}
+                      tone="text-pink-600 hover:border-pink-200 hover:bg-pink-50"
+                    />
+                  </div>
+                  <div className="min-w-0 space-y-3">
+                    <TrendChart
+                      title="Blood Pressure Trends"
+                      data={bloodPressureTrend}
+                      emptyLabel="No blood pressure records available"
+                      minPadding={8}
+                      series={[
+                        { key: "systolic", label: "Systolic", color: "#dc2626" },
+                        { key: "diastolic", label: "Diastolic", color: "#2563eb" },
+                      ]}
+                    />
+                    <StaffHistoryButton
+                      label="View Blood Pressure History"
+                      count={staffBloodPressureRecords.length}
+                      onClick={() => setHistoryModal("blood-pressure")}
+                      tone="text-blue-600 hover:border-blue-200 hover:bg-blue-50"
+                    />
+                  </div>
                 </div>
               </section>
               )}
@@ -1303,6 +1751,28 @@ export default function MotherDetailsPage() {
         </div>
       </div>
 
+      {historyModal === "weight" && (
+        <StaffHistoryModal
+          type="weight"
+          title="Weight History"
+          description="Complete Program Staff monitoring records for maternal weight."
+          records={staffWeightRecords}
+          onClose={() => setHistoryModal(null)}
+          onEdit={(record) => openVitals(record)}
+        />
+      )}
+
+      {historyModal === "blood-pressure" && (
+        <StaffHistoryModal
+          type="blood-pressure"
+          title="Blood Pressure History"
+          description="Complete systolic and diastolic readings from staff-recorded maternal vitals."
+          records={staffBloodPressureRecords}
+          onClose={() => setHistoryModal(null)}
+          onEdit={(record) => openVitals(record)}
+        />
+      )}
+
       {isEditOpen && (
         <Modal title="Edit Mother Information" onClose={() => setIsEditOpen(false)}>
           <form onSubmit={saveInformation} className="grid gap-4 px-5 py-5 sm:grid-cols-2">
@@ -1386,9 +1856,65 @@ export default function MotherDetailsPage() {
       )}
 
       {isVitalsOpen && (
-        <Modal title="Update Maternal Vitals" onClose={() => setIsVitalsOpen(false)}>
+        <Modal title={isVitalsEditMode ? "Edit Maternal Vitals" : "Add Maternal Vitals"} onClose={closeVitalsModal}>
           <form onSubmit={saveVitals} className="px-5 py-5">
+            {(vitalsNotice || activeVitalsGuidance.length > 0) && (
+              <div className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
+                vitalsNotice
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-amber-200 bg-amber-50 text-amber-800"
+              }`}>
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${vitalsNotice ? "text-red-600" : "text-amber-600"}`} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-extrabold">
+                        {vitalsNotice?.title || "Review before saving"}
+                      </p>
+                      {vitalsNotice && (
+                        <button
+                          type="button"
+                          onClick={() => setVitalsNotice(null)}
+                          className="rounded-md p-1 text-red-500 transition hover:bg-red-100"
+                          aria-label="Dismiss vitals warning"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    <ul className="mt-2 space-y-1 font-semibold leading-5">
+                      {(vitalsNotice?.messages || activeVitalsGuidance).map((message) => (
+                        <li key={message}>{message}</li>
+                      ))}
+                    </ul>
+                    <p className="mt-2 text-xs font-bold opacity-80">
+                      {vitalsNotice?.detail || "Review the flagged values before saving this maternal vital record."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-extrabold uppercase tracking-wide text-slate-500 sm:col-span-2">
+                Record Date
+                <input
+                  type="date"
+                  required
+                  disabled={isVitalsEditMode}
+                  value={vitalsForm.recorded_at}
+                  onChange={(event) => setVitalsForm({ ...vitalsForm, recorded_at: event.target.value })}
+                  className={`mt-1 h-10 w-full rounded-lg border px-3 text-sm font-bold outline-none focus:border-pink-500 focus:ring-4 focus:ring-pink-100 ${
+                    isVitalsEditMode
+                      ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                      : "border-slate-300 bg-white text-slate-900"
+                  }`}
+                />
+                {isVitalsEditMode && (
+                  <span className="mt-1 block text-[11px] font-semibold normal-case text-slate-400">
+                    Date is locked while editing an existing monitoring record.
+                  </span>
+                )}
+              </label>
               {vitalEntryFields.map(([key, label, type]) => (
                 <label key={key} className="text-xs font-extrabold uppercase tracking-wide text-slate-500">
                   {label}
@@ -1415,14 +1941,29 @@ export default function MotherDetailsPage() {
                 />
               </label>
             </div>
-            <footer className="mt-5 flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setIsVitalsOpen(false)} className="h-11 rounded-lg border border-slate-300 px-5 text-sm font-extrabold text-slate-700 hover:bg-slate-50">
-                Cancel
-              </button>
-              <button type="submit" disabled={savingVitals} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-pink-600 px-5 text-sm font-extrabold text-white hover:bg-pink-700 disabled:bg-pink-300">
+            <footer className="mt-5 flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                {isVitalsEditMode && (
+                  <button
+                    type="button"
+                    onClick={deleteVitals}
+                    disabled={savingVitals || deletingVitals}
+                    className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-5 text-sm font-extrabold text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:bg-red-100 disabled:text-red-300 sm:w-auto"
+                  >
+                    {deletingVitals ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    Delete Record
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                <button type="button" onClick={closeVitalsModal} disabled={savingVitals || deletingVitals} className="h-11 rounded-lg border border-slate-300 px-5 text-sm font-extrabold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300">
+                  Cancel
+                </button>
+                <button type="submit" disabled={savingVitals || deletingVitals} className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-pink-600 px-5 text-sm font-extrabold text-white hover:bg-pink-700 disabled:bg-pink-300">
                 {savingVitals ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Save Vitals
-              </button>
+                  Save Vitals
+                </button>
+              </div>
             </footer>
           </form>
         </Modal>

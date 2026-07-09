@@ -137,6 +137,84 @@ class MaternalMonitoringTest extends TestCase
             ->assertJsonPath('summary.latest.recorded_by', 'Nurse Linda Reyes');
     }
 
+    public function test_program_staff_can_update_and_delete_existing_monitoring_entry_without_duplicate_graph_points(): void
+    {
+        [$motherUser, $mother] = $this->createMother();
+        [$workerUser, $worker] = $this->createWorker();
+        $worker->mothers()->attach($mother->id);
+
+        Sanctum::actingAs($workerUser, ['health_worker']);
+
+        $firstEntryId = $this->postJson("/api/health-worker/maternal-monitoring/{$mother->id}/entries", [
+            'pregnancy_week' => 32,
+            'systolic_bp' => 120,
+            'diastolic_bp' => 80,
+            'weight_kg' => 74,
+            'recorded_at' => '2026-07-01',
+        ])->assertCreated()->json('entry.id');
+
+        $secondEntryId = $this->postJson("/api/health-worker/maternal-monitoring/{$mother->id}/entries", [
+            'pregnancy_week' => 33,
+            'systolic_bp' => 122,
+            'diastolic_bp' => 82,
+            'weight_kg' => 76,
+            'recorded_at' => '2026-07-08',
+        ])->assertCreated()->json('entry.id');
+
+        $this->patchJson("/api/health-worker/maternal-monitoring/{$mother->id}/entries/{$firstEntryId}", [
+            'pregnancy_week' => 32,
+            'systolic_bp' => 130,
+            'diastolic_bp' => 85,
+            'weight_kg' => 80,
+            'notes' => 'Edited existing point.',
+        ])->assertOk()
+            ->assertJsonPath('entry.id', $firstEntryId)
+            ->assertJsonPath('entry.weight_kg', 80)
+            ->assertJsonPath('entry.blood_pressure', '130/85');
+
+        $this->assertDatabaseCount('maternal_monitoring_entries', 2);
+        $this->assertDatabaseHas('maternal_monitoring_entries', [
+            'id' => $firstEntryId,
+            'mother_id' => $mother->id,
+            'systolic_bp' => 130,
+            'diastolic_bp' => 85,
+            'weight_kg' => 80,
+        ]);
+
+        Sanctum::actingAs($motherUser, ['mother']);
+
+        $response = $this->getJson('/api/maternal-monitoring/me')
+            ->assertOk()
+            ->assertJsonCount(2, 'summary.weight_logs')
+            ->assertJsonCount(2, 'summary.blood_pressure_trend');
+        $this->assertSame(
+            [$firstEntryId, $secondEntryId],
+            collect($response->json('summary.weight_logs'))->pluck('id')->all()
+        );
+        $this->assertSame(80, $response->json('summary.weight_logs.0.weight_kg'));
+        $this->assertSame(130, $response->json('summary.blood_pressure_trend.0.systolic'));
+
+        Sanctum::actingAs($workerUser, ['health_worker']);
+
+        $this->deleteJson("/api/health-worker/maternal-monitoring/{$mother->id}/entries/{$firstEntryId}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Monitoring entry deleted successfully.');
+
+        $this->assertDatabaseCount('maternal_monitoring_entries', 1);
+        $this->assertDatabaseMissing('maternal_monitoring_entries', [
+            'id' => $firstEntryId,
+        ]);
+
+        Sanctum::actingAs($motherUser, ['mother']);
+
+        $afterDeleteResponse = $this->getJson('/api/maternal-monitoring/me')
+            ->assertOk()
+            ->assertJsonCount(1, 'summary.weight_logs')
+            ->assertJsonCount(1, 'summary.blood_pressure_trend');
+        $this->assertSame($secondEntryId, $afterDeleteResponse->json('summary.weight_logs.0.id'));
+        $this->assertSame($secondEntryId, $afterDeleteResponse->json('summary.blood_pressure_trend.0.id'));
+    }
+
     public function test_program_staff_cannot_update_a_mother_outside_casefiles(): void
     {
         [, $mother] = $this->createMother();

@@ -47,4 +47,9 @@ class Consultation extends Model
     {
         return $this->hasOne(ConsultationMessage::class)->latestOfMany();
     }
+
+    public function calls(): HasMany
+    {
+        return $this->hasMany(ConsultationCall::class);
+    }
 }

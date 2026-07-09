@@ -1,15 +1,18 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   Activity,
   AlertTriangle,
+  ArrowUpDown,
   Bell,
   CalendarDays,
   CheckCircle2,
   Eye,
   HeartPulse,
+  History,
   Scale,
+  Search,
   Stethoscope,
   TrendingUp,
   X,
@@ -146,6 +149,13 @@ const compactWeightStatusLabel = (status) => ({
   pending: "Pending",
 }[status.key] || status.label);
 
+const recordDateValue = (record) => {
+  const rawDate = record?.date || record?.recorded_at;
+  if (!rawDate) return 0;
+  const date = new Date(String(rawDate).includes("T") ? rawDate : `${rawDate}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
+
 const getVitalStatus = (key, latest, weightSummary) => {
   if (!latest) return { label: "Pending", className: statusClasses.pending };
 
@@ -195,17 +205,16 @@ function VitalCard({ icon: Icon, title, value, unit, range, tone, status }) {
           <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border ${tone}`}>
             <Icon className="h-5 w-5" />
           </div>
-          <div className="min-w-0">
-            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-400">{title}</p>
-            <p className="mt-1 break-words text-xl font-extrabold text-slate-950 sm:text-2xl">
-              {value ?? "N/A"} <span className="text-sm font-bold text-slate-500">{unit}</span>
-            </p>
-          </div>
+          <p className="min-w-0 text-[10px] font-extrabold uppercase tracking-[0.14em] text-slate-400">{title}</p>
         </div>
         <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-extrabold uppercase ${status.className}`}>
           {status.label}
         </span>
       </div>
+      <p className="mt-4 flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-2xl font-extrabold leading-tight text-slate-950 sm:text-3xl">
+        <span className="whitespace-nowrap">{value ?? "N/A"}</span>
+        {unit && <span className="text-sm font-bold text-slate-500">{unit}</span>}
+      </p>
       <div className="mt-5 border-t border-slate-100 pt-3 text-xs text-slate-500">
         <div className="flex flex-col justify-between gap-1 sm:flex-row sm:items-center">
           <span className="font-bold">Healthy Range</span>
@@ -370,21 +379,30 @@ function ProgressIndicator({ gain, targetMin, targetMax, status }) {
   );
 }
 
-function WeightHistoryTable({ logs, preWeight, targetMin, targetMax }) {
+function WeightHistoryTable({
+  logs,
+  preWeight,
+  targetMin,
+  targetMax,
+  compact = false,
+  emptyLabel = "No weight records are available yet.",
+}) {
   return (
-    <article className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-extrabold uppercase tracking-wide text-slate-900">Weight History</h3>
-        <span className="shrink-0 rounded-md bg-pink-50 px-2 py-1 text-[10px] font-extrabold uppercase text-pink-600">
-          {logs.length} record{logs.length === 1 ? "" : "s"}
-        </span>
-      </div>
+    <article className={compact ? "min-w-0" : "min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5"}>
+      {!compact && (
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-extrabold uppercase tracking-wide text-slate-900">Weight History</h3>
+          <span className="shrink-0 rounded-md bg-pink-50 px-2 py-1 text-[10px] font-extrabold uppercase text-pink-600">
+            {logs.length} record{logs.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      )}
       {logs.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-500">
-          No weight records are available yet.
+          {emptyLabel}
         </div>
       ) : (
-        <div className="inay-scroll-x max-h-[30rem] overflow-y-auto rounded-lg border border-slate-100">
+        <div className={`${compact ? "max-h-[calc(80vh-18rem)]" : "max-h-[30rem]"} inay-scroll-x overflow-y-auto rounded-lg border border-slate-100`}>
           <table className="min-w-[640px] w-full text-left text-xs sm:min-w-[720px]">
             <thead className="sticky top-0 z-10 bg-slate-50 font-extrabold uppercase text-slate-400">
               <tr>
@@ -426,21 +444,27 @@ function WeightHistoryTable({ logs, preWeight, targetMin, targetMax }) {
   );
 }
 
-function BloodPressureHistoryTable({ logs }) {
+function BloodPressureHistoryTable({
+  logs,
+  compact = false,
+  emptyLabel = "No blood pressure records are available yet.",
+}) {
   return (
-    <article className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-extrabold uppercase tracking-wide text-slate-900">Blood Pressure History</h3>
-        <span className="shrink-0 rounded-md bg-blue-50 px-2 py-1 text-[10px] font-extrabold uppercase text-blue-700">
-          {logs.length} record{logs.length === 1 ? "" : "s"}
-        </span>
-      </div>
+    <article className={compact ? "min-w-0" : "min-w-0 rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5"}>
+      {!compact && (
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h3 className="text-sm font-extrabold uppercase tracking-wide text-slate-900">Blood Pressure History</h3>
+          <span className="shrink-0 rounded-md bg-blue-50 px-2 py-1 text-[10px] font-extrabold uppercase text-blue-700">
+            {logs.length} record{logs.length === 1 ? "" : "s"}
+          </span>
+        </div>
+      )}
       {logs.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm font-bold text-slate-500">
-          No blood pressure records are available yet.
+          {emptyLabel}
         </div>
       ) : (
-        <div className="inay-scroll-x max-h-[30rem] overflow-y-auto rounded-lg border border-slate-100">
+        <div className={`${compact ? "max-h-[calc(80vh-18rem)]" : "max-h-[30rem]"} inay-scroll-x overflow-y-auto rounded-lg border border-slate-100`}>
           <table className="min-w-[660px] w-full text-left text-xs sm:min-w-[760px]">
             <thead className="sticky top-0 z-10 bg-slate-50 font-extrabold uppercase text-slate-400">
               <tr>
@@ -477,7 +501,201 @@ function BloodPressureHistoryTable({ logs }) {
   );
 }
 
-function WeightProgressTracker({ weightLogs, weightTrend, weightSummary, weightAnalytics }) {
+function HistoryButton({ label, count, onClick, tone = "text-pink-600 hover:border-pink-200 hover:bg-pink-50" }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-extrabold shadow-sm transition hover:shadow-md focus:outline-none focus:ring-4 focus:ring-pink-100 ${tone}`}
+    >
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <History className="h-4 w-4 shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+      <span className="shrink-0 rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-extrabold uppercase text-slate-500">
+        {count} record{count === 1 ? "" : "s"}
+      </span>
+    </button>
+  );
+}
+
+function HistoryModal({
+  type,
+  title,
+  description,
+  logs,
+  preWeight,
+  targetMin,
+  targetMax,
+  onClose,
+}) {
+  const [query, setQuery] = useState("");
+  const [sortDirection, setSortDirection] = useState("desc");
+  const [isClosing, setIsClosing] = useState(false);
+  const closeTimerRef = useRef(null);
+
+  const requestClose = useCallback(() => {
+    if (isClosing) return;
+    setIsClosing(true);
+    closeTimerRef.current = window.setTimeout(onClose, 150);
+  }, [isClosing, onClose]);
+
+  useEffect(() => () => {
+    if (closeTimerRef.current) {
+      window.clearTimeout(closeTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        requestClose();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = originalOverflow;
+    };
+  }, [requestClose]);
+
+  const filteredLogs = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const matchesQuery = (log) => {
+      if (!normalizedQuery) return true;
+
+      if (type === "weight") {
+        const gain = Number(log.weight_kg) - Number(preWeight || 0);
+        const status = weightStatus({
+          total_gain_kg: gain,
+          target_gain_min_kg: targetMin,
+          target_gain_max_kg: targetMax,
+        });
+        const values = [
+          formatDate(log.date || log.recorded_at),
+          log.date,
+          log.recorded_at,
+          log.pregnancy_week ? `Week ${log.pregnancy_week}` : "",
+          log.weight_kg,
+          Number.isFinite(gain) ? `${gain >= 0 ? "+" : ""}${formatNumber(gain)} kg` : "",
+          status.label,
+          compactWeightStatusLabel(status),
+        ];
+
+        return values.some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+      }
+
+      const status = log.status_key
+        ? { label: log.status, className: statusClasses[log.status_key] || statusClasses.pending }
+        : bloodPressureStatus(log.systolic, log.diastolic);
+      const values = [
+        formatDate(log.date || log.recorded_at),
+        log.date,
+        log.recorded_at,
+        log.blood_pressure,
+        log.systolic,
+        log.diastolic,
+        status.label,
+      ];
+
+      return values.some((value) => String(value || "").toLowerCase().includes(normalizedQuery));
+    };
+
+    return (logs || [])
+      .filter(matchesQuery)
+      .slice()
+      .sort((left, right) => {
+        const direction = sortDirection === "desc" ? -1 : 1;
+        return (recordDateValue(left) - recordDateValue(right)) * direction;
+      });
+  }, [logs, preWeight, query, sortDirection, targetMax, targetMin, type]);
+
+  const emptyLabel = query.trim()
+    ? "No records match your search."
+    : type === "weight"
+      ? "No weight records are available yet."
+      : "No blood pressure records are available yet.";
+
+  return (
+    <div
+      className={`fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/55 px-3 py-5 backdrop-blur-sm sm:px-6 ${isClosing ? "inay-modal-overlay-out" : "inay-modal-overlay-in"}`}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) requestClose();
+      }}
+      role="presentation"
+    >
+      <section
+        className={`flex h-[80vh] w-full max-w-[900px] flex-col rounded-2xl bg-white shadow-2xl ${isClosing ? "inay-modal-panel-out" : "inay-modal-panel-in"}`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={`${type}-history-title`}
+      >
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-4 py-4 sm:px-5">
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-pink-600">Monitoring History</p>
+            <h2 id={`${type}-history-title`} className="mt-1 text-lg font-extrabold text-slate-950 sm:text-xl">{title}</h2>
+            <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">{description}</p>
+          </div>
+          <button
+            type="button"
+            onClick={requestClose}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900 focus:outline-none focus:ring-4 focus:ring-pink-100"
+            aria-label={`Close ${title}`}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="shrink-0 border-b border-slate-100 px-4 py-3 sm:px-5">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <label className="relative block min-w-0">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search date, values, or status..."
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-10 pr-4 text-sm font-semibold text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-pink-500 focus:bg-white focus:ring-4 focus:ring-pink-100"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setSortDirection((current) => (current === "desc" ? "asc" : "desc"))}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-extrabold uppercase text-slate-600 transition hover:border-pink-200 hover:text-pink-600 focus:outline-none focus:ring-4 focus:ring-pink-100"
+            >
+              <ArrowUpDown className="h-4 w-4" />
+              {sortDirection === "desc" ? "Newest First" : "Oldest First"}
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] font-bold text-slate-400">
+            Showing {filteredLogs.length} of {logs.length} record{logs.length === 1 ? "" : "s"}
+          </p>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-5">
+          {type === "weight" ? (
+            <WeightHistoryTable
+              logs={filteredLogs}
+              preWeight={preWeight}
+              targetMin={targetMin}
+              targetMax={targetMax}
+              compact
+              emptyLabel={emptyLabel}
+            />
+          ) : (
+            <BloodPressureHistoryTable logs={filteredLogs} compact emptyLabel={emptyLabel} />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function WeightProgressTracker({ weightLogs, weightTrend, weightSummary, weightAnalytics, onViewHistory }) {
   const status = weightStatus(weightSummary);
   const preWeight = Number(weightSummary?.pre_pregnancy_weight_kg ?? 0);
   const targetMin = Number(weightSummary?.target_gain_min_kg ?? 11);
@@ -523,12 +741,17 @@ function WeightProgressTracker({ weightLogs, weightTrend, weightSummary, weightA
         series={[{ key: "weight_kg", label: "Weight (kg)", color: "#db2777" }]}
       />
 
-      <WeightHistoryTable logs={weightLogs} preWeight={preWeight} targetMin={targetMin} targetMax={targetMax} />
+      <HistoryButton
+        label="View Weight History"
+        count={weightLogs.length}
+        onClick={onViewHistory}
+        tone="text-pink-600 hover:border-pink-200 hover:bg-pink-50"
+      />
     </section>
   );
 }
 
-function BloodPressureTrend({ logs, trend, latest }) {
+function BloodPressureTrend({ logs, trend, latest, onViewHistory }) {
   const latestLog = logs.at(-1);
   const latestStatus = latestLog?.status_key
     ? { label: latestLog.status, className: statusClasses[latestLog.status_key] || statusClasses.pending }
@@ -570,7 +793,12 @@ function BloodPressureTrend({ logs, trend, latest }) {
         ]}
       />
 
-      <BloodPressureHistoryTable logs={logs} />
+      <HistoryButton
+        label="View Blood Pressure History"
+        count={logs.length}
+        onClick={onViewHistory}
+        tone="text-blue-600 hover:border-blue-200 hover:bg-blue-50"
+      />
     </section>
   );
 }
@@ -578,6 +806,7 @@ function BloodPressureTrend({ logs, trend, latest }) {
 export default function MaternalMonitoringDashboard() {
   const { userName } = useCurrentUser();
   const [notice, setNotice] = useState(null);
+  const [historyModal, setHistoryModal] = useState(null);
   const hasMounted = useSyncExternalStore(emptySubscribe, clientSnapshot, serverSnapshot);
   const { data, error, isLoading, isValidating } = useApiQuery("/maternal-monitoring/me", {
     refreshInterval: 10000,
@@ -592,6 +821,9 @@ export default function MaternalMonitoringDashboard() {
   const weightTrend = useMemo(() => data?.summary?.weight_logs || [], [data?.summary?.weight_logs]);
   const bloodPressureLogs = useMemo(() => data?.summary?.blood_pressure_logs || [], [data?.summary?.blood_pressure_logs]);
   const bloodPressureTrend = useMemo(() => data?.summary?.blood_pressure_trend || [], [data?.summary?.blood_pressure_trend]);
+  const preWeight = Number(weightSummary?.pre_pregnancy_weight_kg ?? 0);
+  const targetMin = Number(weightSummary?.target_gain_min_kg ?? 11);
+  const targetMax = Number(weightSummary?.target_gain_max_kg ?? 16);
   if (!hasMounted || (isLoading && !data)) {
     return <MaternalMonitoringSkeleton />;
   }
@@ -660,12 +892,14 @@ export default function MaternalMonitoringDashboard() {
             weightTrend={weightTrend}
             weightSummary={weightSummary}
             weightAnalytics={weightAnalytics}
+            onViewHistory={() => setHistoryModal("weight")}
           />
 
           <BloodPressureTrend
             logs={bloodPressureLogs}
             trend={bloodPressureTrend}
             latest={latest}
+            onViewHistory={() => setHistoryModal("blood-pressure")}
           />
         </section>
 
@@ -698,6 +932,29 @@ export default function MaternalMonitoringDashboard() {
           High-risk pregnancy protocol activates automatically when Program Staff records warning values.
         </div>
       </div>
+
+      {historyModal === "weight" && (
+        <HistoryModal
+          type="weight"
+          title="Weight History"
+          description="Complete maternal weight records entered by Program Staff."
+          logs={weightLogs}
+          preWeight={preWeight}
+          targetMin={targetMin}
+          targetMax={targetMax}
+          onClose={() => setHistoryModal(null)}
+        />
+      )}
+
+      {historyModal === "blood-pressure" && (
+        <HistoryModal
+          type="blood-pressure"
+          title="Blood Pressure History"
+          description="Complete systolic and diastolic readings from recorded maternal vitals."
+          logs={bloodPressureLogs}
+          onClose={() => setHistoryModal(null)}
+        />
+      )}
     </div>
   );
 }

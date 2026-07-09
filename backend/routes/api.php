@@ -71,9 +71,18 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/workers', 'workers');
             Route::get('/iec-resources', 'iecResources');
             Route::get('/messages/{message}/attachment', 'attachment');
+            Route::get('/calls/active', 'activeAnyCall');
             Route::post('/', 'store');
+            Route::get('/{consultation}/calls/active', 'activeCall');
+            Route::post('/{consultation}/calls', 'startCall');
+            Route::post('/{consultation}/calls/{call}/accept', 'acceptCall');
+            Route::post('/{consultation}/calls/{call}/end', 'endCall');
+            Route::get('/{consultation}/calls/{call}/signals', 'callSignals');
+            Route::post('/{consultation}/calls/{call}/signals', 'storeCallSignal');
             Route::get('/{consultation}', 'show');
+            Route::get('/{consultation}/messages', 'messages');
             Route::post('/{consultation}/messages', 'sendMessage');
+            Route::patch('/{consultation}/messages/{message}/unsend', 'unsendMessage');
             Route::patch('/{consultation}', 'update');
         });
 
@@ -108,6 +117,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/export-pdf', 'exportPdf');
             Route::get('/{mother}', 'showMother');
             Route::post('/{mother}/entries', 'storeMotherEntry');
+            Route::patch('/{mother}/entries/{entry}', 'updateMotherEntry');
+            Route::delete('/{mother}/entries/{entry}', 'deleteMotherEntry');
         });
 
     Route::controller(ChildHealthController::class)

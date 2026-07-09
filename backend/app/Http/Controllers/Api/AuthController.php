@@ -84,11 +84,13 @@ class AuthController extends Controller
             'pregnancy_month.required_if' => 'Pregnancy month is required when the mother is pregnant.',
         ]);
 
-        $existingUser = User::where('email', $validated['email'])->first();
+        $existingUser = User::where('email', $validated['email'])
+            ->where('role', $validated['role'])
+            ->first();
 
         if ($existingUser && !Hash::check($validated['password'], $existingUser->password)) {
             return response()->json([
-                'message' => 'This email already has an account. Enter its current password to add another portal.',
+                'message' => 'This email already has an account for the selected portal.',
             ], 422);
         }
 
@@ -169,12 +171,29 @@ class AuthController extends Controller
             'portal' => ['required', 'in:mother,health_worker'],
         ]);
 
-        $user = User::where('email', $validated['email'])->first();
+        $user = User::where('email', $validated['email'])
+            ->where('role', $validated['portal'])
+            ->first();
 
         if (!$user || !Hash::check(
             $validated['password'],
             $user->password
         )) {
+            $sameEmailUsers = User::where('email', $validated['email'])->get();
+            $hasOtherPortalWithPassword = $sameEmailUsers->contains(
+                fn (User $sameEmailUser) => Hash::check($validated['password'], $sameEmailUser->password)
+            );
+
+            if (!$user && $hasOtherPortalWithPassword) {
+                $portalName = $validated['portal'] === 'health_worker'
+                    ? 'Program Staff'
+                    : 'Mother/User';
+
+                return response()->json([
+                    'message' => "No {$portalName} portal is connected to this account. Register with this email and password to add it.",
+                ], 403);
+            }
+
             return response()->json([
                 'message' => 'Invalid Credentials'
             ], 401);

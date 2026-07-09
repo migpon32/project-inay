@@ -24,7 +24,7 @@ const navigationItems = [
   { label: "Mothers Casefiles", icon: Users, href: "/health-worker/mothers" },
   { label: "Neonatal & Vaccines", icon: Baby, href: "/health-worker/neonatal-vaccines" },
   { label: "Clinic Schedule", icon: CalendarDays, href: "/health-worker/clinic-schedule" },
-  { label: "Telehealth Messages", icon: MessageSquare, href: "/health-worker/messages" },
+  { label: "Consultation", icon: MessageSquare, href: "/health-worker/messages" },
   { label: "Dynamic Reports", icon: FileBarChart, href: "/health-worker/reports" },
 ];
 
@@ -157,7 +157,7 @@ export default function HealthWorkerShell({ children }) {
                     >
                       <Icon className="h-4 w-4 shrink-0" />
                       <span>{item.label}</span>
-                      {item.label === "Telehealth Messages" && consultationUnread > 0 && (
+                      {item.href === "/health-worker/messages" && consultationUnread > 0 && (
                         <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-pink-600 px-1 text-[10px] font-extrabold text-white">
                           {consultationUnread > 99 ? "99+" : consultationUnread}
                         </span>

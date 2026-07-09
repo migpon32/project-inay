@@ -122,6 +122,53 @@ class MaternalMonitoringController extends Controller
         ], 201);
     }
 
+    public function updateMotherEntry(Request $request, Mother $mother, MaternalMonitoringEntry $entry): JsonResponse
+    {
+        $this->authorizeAssignedMother($request, $mother);
+        $this->authorizeMotherEntry($mother, $entry);
+
+        $validated = $this->validateEntry($request, includeRecordedAt: false);
+        $riskLevel = $this->classifyRisk($validated, $mother);
+
+        DB::transaction(function () use ($entry, $validated, $riskLevel, $mother) {
+            $entry->update([
+                ...$validated,
+                'blood_sugar_mgdl' => $validated['blood_sugar_mgdl'] ?? null,
+                'body_temperature_c' => $validated['body_temperature_c'] ?? null,
+                'hemoglobin_gdl' => $validated['hemoglobin_gdl'] ?? null,
+                'risk_level' => $riskLevel,
+            ]);
+
+            $this->syncMotherFromMonitoringEntries($mother);
+        });
+
+        $this->forgetMotherMonitoringCache($mother);
+
+        return response()->json([
+            'message' => 'Monitoring entry updated successfully.',
+            'entry' => $this->entryData($entry->fresh()),
+            'summary' => $this->summaryForMother($mother),
+        ]);
+    }
+
+    public function deleteMotherEntry(Request $request, Mother $mother, MaternalMonitoringEntry $entry): JsonResponse
+    {
+        $this->authorizeAssignedMother($request, $mother);
+        $this->authorizeMotherEntry($mother, $entry);
+
+        DB::transaction(function () use ($entry, $mother) {
+            $entry->delete();
+            $this->syncMotherFromMonitoringEntries($mother);
+        });
+
+        $this->forgetMotherMonitoringCache($mother);
+
+        return response()->json([
+            'message' => 'Monitoring entry deleted successfully.',
+            'summary' => $this->summaryForMother($mother),
+        ]);
+    }
+
     public function exportPdf(Request $request)
     {
         $worker = $this->currentWorker($request);
@@ -141,18 +188,7 @@ class MaternalMonitoringController extends Controller
 
     private function createEntry(Request $request, Mother $mother): MaternalMonitoringEntry
     {
-        $validated = $request->validate([
-            'pregnancy_week' => ['required', 'integer', 'min:1', 'max:42'],
-            'systolic_bp' => ['nullable', 'integer', 'min:60', 'max:220'],
-            'diastolic_bp' => ['nullable', 'integer', 'min:40', 'max:140'],
-            'blood_sugar_mgdl' => ['nullable', 'numeric', 'min:40', 'max:400'],
-            'body_temperature_c' => ['nullable', 'numeric', 'min:34', 'max:43'],
-            'heart_rate' => ['nullable', 'integer', 'min:40', 'max:180'],
-            'weight_kg' => ['nullable', 'numeric', 'min:30', 'max:200'],
-            'hemoglobin_gdl' => ['nullable', 'numeric', 'min:4', 'max:20'],
-            'notes' => ['nullable', 'string', 'max:1000'],
-            'recorded_at' => ['nullable', 'date'],
-        ]);
+        $validated = $this->validateEntry($request);
 
         $riskLevel = $this->classifyRisk($validated, $mother);
 
@@ -176,6 +212,38 @@ class MaternalMonitoringController extends Controller
 
             return $entry;
         });
+    }
+
+    private function validateEntry(Request $request, bool $includeRecordedAt = true): array
+    {
+        $rules = [
+            'pregnancy_week' => ['required', 'integer', 'min:1', 'max:42'],
+            'systolic_bp' => ['nullable', 'integer', 'min:60', 'max:220'],
+            'diastolic_bp' => ['nullable', 'integer', 'min:40', 'max:140'],
+            'blood_sugar_mgdl' => ['nullable', 'numeric', 'min:40', 'max:400'],
+            'body_temperature_c' => ['nullable', 'numeric', 'min:34', 'max:43'],
+            'heart_rate' => ['nullable', 'integer', 'min:40', 'max:180'],
+            'weight_kg' => ['nullable', 'numeric', 'min:30', 'max:200'],
+            'hemoglobin_gdl' => ['nullable', 'numeric', 'min:4', 'max:20'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ];
+
+        if ($includeRecordedAt) {
+            $rules['recorded_at'] = ['nullable', 'date'];
+        }
+
+        return $request->validate($rules, [], [
+            'pregnancy_week' => 'pregnancy week',
+            'systolic_bp' => 'systolic BP',
+            'diastolic_bp' => 'diastolic BP',
+            'blood_sugar_mgdl' => 'blood sugar',
+            'body_temperature_c' => 'body temperature',
+            'heart_rate' => 'heart rate',
+            'weight_kg' => 'weight',
+            'hemoglobin_gdl' => 'hemoglobin',
+            'recorded_at' => 'record date',
+            'notes' => 'program staff notes',
+        ]);
     }
 
     private function summaryForMother(Mother $mother): array
@@ -463,6 +531,30 @@ class MaternalMonitoringController extends Controller
         Cache::forget("maternal-monitoring:status:{$mother->id}");
     }
 
+    private function syncMotherFromMonitoringEntries(Mother $mother): void
+    {
+        $latestEntry = $mother->monitoringEntries()
+            ->latest('recorded_at')
+            ->latest('id')
+            ->first();
+        $latestWeightEntry = $mother->monitoringEntries()
+            ->whereNotNull('weight_kg')
+            ->latest('recorded_at')
+            ->latest('id')
+            ->first();
+
+        if (!$latestEntry) {
+            return;
+        }
+
+        $mother->update([
+            'pregnancy_week' => $latestEntry->pregnancy_week,
+            'pregnancy_month' => (int) ceil($latestEntry->pregnancy_week / 4),
+            'last_weight_kg' => $latestWeightEntry?->weight_kg,
+            'risk_rating' => $latestEntry->risk_level,
+        ]);
+    }
+
     private function currentMother(Request $request): Mother
     {
         $mother = $request->user()?->mother;
@@ -490,5 +582,14 @@ class MaternalMonitoringController extends Controller
         );
 
         return $worker;
+    }
+
+    private function authorizeMotherEntry(Mother $mother, MaternalMonitoringEntry $entry): void
+    {
+        abort_unless(
+            (int) $entry->mother_id === (int) $mother->id,
+            404,
+            'Monitoring entry not found for this mother.'
+        );
     }
 }

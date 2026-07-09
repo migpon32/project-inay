@@ -3,7 +3,7 @@
 :root {
   --background: #ffffff;
   --foreground: #0f172a;
-  --font-geist-sans: Arial, Helvetica, sans-serif;
+  --font-geist-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
   --font-geist-mono: "Courier New", Courier, monospace;
 }
 
@@ -17,7 +17,7 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans);
   line-height: 1.5;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -53,6 +53,66 @@ html {
   width: 100%;
   min-width: 0;
   overflow: hidden;
+}
+
+@keyframes inay-modal-overlay-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes inay-modal-overlay-out {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes inay-modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes inay-modal-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+.inay-modal-overlay-in {
+  animation: inay-modal-overlay-in 180ms ease-out;
+}
+
+.inay-modal-overlay-out {
+  animation: inay-modal-overlay-out 150ms ease-in forwards;
+}
+
+.inay-modal-panel-in {
+  animation: inay-modal-panel-in 200ms ease-out;
+}
+
+.inay-modal-panel-out {
+  animation: inay-modal-panel-out 150ms ease-in forwards;
 }
 
 .inay-readable-entry {
@@ -191,6 +251,10 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .inay-modal-overlay-in,
+  .inay-modal-overlay-out,
+  .inay-modal-panel-in,
+  .inay-modal-panel-out,
   .profile-photo-overlay,
   .profile-photo-dialog,
   .profile-photo-overlay-out,

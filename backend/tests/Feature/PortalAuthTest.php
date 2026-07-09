@@ -10,12 +10,12 @@ class PortalAuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_one_account_can_have_mother_and_healthcare_worker_profiles(): void
+    public function test_same_email_can_have_separate_mother_and_healthcare_worker_accounts(): void
     {
         $motherRegistration = $this->postJson('/api/register', [
             'name' => 'Nurse Mother',
             'email' => 'nurse.mother@example.com',
-            'password' => 'password123',
+            'password' => 'mother-password',
             'role' => 'mother',
         ]);
 
@@ -24,44 +24,65 @@ class PortalAuthTest extends TestCase
             ->assertJsonPath('active_portal', 'mother')
             ->assertJsonPath('user.mother.pregnancy_status', 'not_provided')
             ->assertJsonPath('user.healthcare_worker', null);
+        $motherUserId = $motherRegistration->json('user.id');
 
         $workerRegistration = $this->postJson('/api/register', [
             'name' => 'Nurse Mother',
             'email' => 'nurse.mother@example.com',
-            'password' => 'password123',
+            'password' => 'worker-password',
             'role' => 'health_worker',
         ]);
 
         $workerRegistration
             ->assertCreated()
             ->assertJsonPath('active_portal', 'health_worker')
-            ->assertJsonPath('user.mother.pregnancy_status', 'not_provided')
+            ->assertJsonPath('user.mother', null)
             ->assertJsonPath('user.healthcare_worker.profession', 'nurse');
+        $workerUserId = $workerRegistration->json('user.id');
 
-        $this->assertDatabaseCount('users', 1);
+        $this->assertNotSame($motherUserId, $workerUserId);
+        $this->assertDatabaseCount('users', 2);
         $this->assertDatabaseCount('mothers', 1);
         $this->assertDatabaseCount('healthcare_workers', 1);
+        $this->assertDatabaseHas('users', [
+            'id' => $motherUserId,
+            'email' => 'nurse.mother@example.com',
+            'role' => 'mother',
+        ]);
+        $this->assertDatabaseHas('users', [
+            'id' => $workerUserId,
+            'email' => 'nurse.mother@example.com',
+            'role' => 'health_worker',
+        ]);
         $this->assertDatabaseHas('mothers', [
             'email' => 'nurse.mother@example.com',
+            'user_id' => $motherUserId,
         ]);
         $this->assertDatabaseHas('healthcare_workers', [
             'email' => 'nurse.mother@example.com',
+            'user_id' => $workerUserId,
         ]);
 
         $this->postJson('/api/login', [
             'email' => 'nurse.mother@example.com',
-            'password' => 'password123',
+            'password' => 'mother-password',
             'portal' => 'mother',
-        ])->assertOk()->assertJsonPath('active_portal', 'mother');
+        ])->assertOk()
+            ->assertJsonPath('active_portal', 'mother')
+            ->assertJsonPath('user.id', $motherUserId)
+            ->assertJsonPath('user.role', 'mother');
 
         $this->postJson('/api/login', [
             'email' => 'nurse.mother@example.com',
-            'password' => 'password123',
+            'password' => 'worker-password',
             'portal' => 'health_worker',
-        ])->assertOk()->assertJsonPath('active_portal', 'health_worker');
+        ])->assertOk()
+            ->assertJsonPath('active_portal', 'health_worker')
+            ->assertJsonPath('user.id', $workerUserId)
+            ->assertJsonPath('user.role', 'health_worker');
     }
 
-    public function test_existing_email_requires_the_current_password_to_add_a_portal(): void
+    public function test_same_email_cannot_duplicate_the_same_portal(): void
     {
         $this->postJson('/api/register', [
             'name' => 'Existing Mother',
@@ -74,12 +95,9 @@ class PortalAuthTest extends TestCase
             'name' => 'Existing Mother',
             'email' => 'existing@example.com',
             'password' => 'wrong-password',
-            'role' => 'health_worker',
+            'role' => 'mother',
         ])->assertStatus(422)
-            ->assertJsonPath(
-                'message',
-                'This email already has an account. Enter its current password to add another portal.'
-            );
+            ->assertJsonPath('errors.email.0', 'Email has already been used.');
 
         $this->assertDatabaseCount('users', 1);
         $this->assertDatabaseCount('mothers', 1);
